@@ -1,37 +1,41 @@
-"""Entrypoint for news-image-20261120.
+"""Copy the pre-drawn front page into the output directory.
 
-The front page itself is drawn at build time by draw_front.py and
-committed as entry.png. This program does nothing but put that exact
-file where the grader reads it, using the standard library alone:
-no fonts, no network, no drawing, so the two graded runs can only
-produce identical bytes.
+The picture itself is drawn at build time by draw_front.py, which
+produces entry.png next to this file. This module does no drawing at
+all: it only copies that finished PNG into the output folder, so
+running it twice yields byte-identical files.
 """
 
 import os
 import shutil
 import sys
 
-IMAGE = "entry.png"
 
-
-def out_dir():
-    """Grader output dir: the kit's env var, else /output."""
-    return os.environ.get("MAKEFUN_OUTPUT_DIR") or "/output"
+def output_directory():
+    """Pick the destination folder from the environment, or /output."""
+    chosen = os.environ.get("MAKEFUN_OUTPUT_DIR")
+    if chosen:
+        return chosen
+    return "/output"
 
 
 def run():
+    """Copy entry.png beside this file into the output directory."""
     here = os.path.dirname(os.path.abspath(__file__))
-    src = os.path.join(here, IMAGE)
-    dest_dir = out_dir()
-    os.makedirs(dest_dir, exist_ok=True)
-    dest = os.path.join(dest_dir, IMAGE)
-    shutil.copyfile(src, dest)
-    if os.path.getsize(dest) != os.path.getsize(src):
-        print("copy failed: sizes differ", file=sys.stderr)
+    source = os.path.join(here, "entry.png")
+    target_dir = output_directory()
+    os.makedirs(target_dir, exist_ok=True)
+    target = os.path.join(target_dir, "entry.png")
+    shutil.copyfile(source, target)
+    wanted = os.path.getsize(source)
+    got = os.path.getsize(target)
+    if got != wanted:
+        print("error: copied file is %d bytes, expected %d"
+              % (got, wanted), file=sys.stderr)
         return 1
-    print("wrote %s (%d bytes)" % (dest, os.path.getsize(dest)))
+    print("wrote %s (%d bytes)" % (target, got))
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(run())
+    raise SystemExit(run())

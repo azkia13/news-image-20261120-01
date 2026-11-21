@@ -1,384 +1,417 @@
-"""Draw the front page for news-image-20261120.
+"""Draw the front page for 20 November 2026 as a single 1024x1024 PNG.
 
-One 1024x1024 newspaper page summing up world news from Friday,
-20 November 2026. Deterministic: no randomness, no clock, no network.
-Python + Pillow only.
+Everything here is deterministic: fixed text, fixed geometry, no clock,
+no randomness and no network access. Run this file and it writes
+entry.png next to itself.
 """
 
+import math
 import os
 
 from PIL import Image, ImageDraw, ImageFont
 
-W, H = 1024, 1024
-
+# --- palette ---------------------------------------------------------------
 PAPER = (247, 243, 232)
-PAPER2 = (238, 232, 214)
+PANEL = (238, 232, 214)
 INK = (24, 24, 22)
 BODY = (52, 52, 48)
-FAINT = (110, 104, 90)
-RULE = (24, 24, 22)
+FADED = (110, 104, 90)
 RED = (178, 34, 28)
-NAVY = (28, 44, 74)
-NAVY2 = (18, 30, 54)
+NIGHT = (28, 44, 74)
+DARK = (18, 30, 54)
 GOLD = (214, 164, 62)
 TEAL = (31, 120, 110)
 BLUE = (52, 96, 168)
-STEEL = (74, 112, 148)
-DARK_SKYLINE = (12, 22, 44)
-PANEL_LINE = (190, 182, 164)
-NUM_FG = (240, 238, 230)
-NUM_LABEL = (185, 200, 220)
-STRIP = (232, 226, 208)
 PURPLE = (128, 84, 160)
-ORANGE = (255, 140, 0)
-YELLOW = (255, 200, 40)
+WIRE = (232, 226, 208)
+OUTLINE = (178, 172, 156)
+SKY = (22, 36, 64)
+SILHOUETTE = (10, 16, 30)
+RIVER = (74, 110, 148)
+STEEL = (158, 168, 180)
+ORANGE = (232, 118, 28)
+YELLOW = (242, 190, 64)
 
-DEJAVU = "/usr/share/fonts/truetype/dejavu/"
-LIBERATION = "/usr/share/fonts/truetype/liberation/"
+WIDTH = 1024
+HEIGHT = 1024
 
-FONTS = {
-    "serif_bold": ("DejaVuSerif-Bold.ttf", "LiberationSerif-Bold.ttf"),
-    "serif": ("DejaVuSerif.ttf", "LiberationSerif-Regular.ttf"),
-    "sans_bold": ("DejaVuSans-Bold.ttf", "LiberationSans-Bold.ttf"),
-    "sans": ("DejaVuSans.ttf", "LiberationSans-Regular.ttf"),
-}
+SERIF_DIR = "/usr/share/fonts/truetype/dejavu"
+SANS_DIR = "/usr/share/fonts/truetype/dejavu"
+LIB_DIR = "/usr/share/fonts/truetype/liberation"
 
 
-def font(name, size):
-    """Load a font by short name, falling back to Liberation."""
-    primary, fallback = FONTS[name]
-    for base, fname in ((DEJAVU, primary), (LIBERATION, fallback)):
-        path = os.path.join(base, fname)
-        if os.path.exists(path):
+def load_font(family, size, bold=False):
+    """Return a TrueType font, trying DejaVu first, then Liberation."""
+    if family == "serif":
+        names = ["DejaVuSerif-Bold.ttf", "DejaVuSerif.ttf"]
+        lib = ["LiberationSerif-Bold.ttf", "LiberationSerif-Regular.ttf"]
+    else:
+        names = ["DejaVuSans-Bold.ttf", "DejaVuSans.ttf"]
+        lib = ["LiberationSans-Bold.ttf", "LiberationSans-Regular.ttf"]
+    pick = names[0] if bold else names[1]
+    lib_pick = lib[0] if bold else lib[1]
+    for path in (os.path.join(SERIF_DIR, pick),
+                 os.path.join(LIB_DIR, lib_pick)):
+        try:
             return ImageFont.truetype(path, size)
+        except OSError:
+            continue
     return ImageFont.load_default()
 
 
-def text_w(draw, text, fnt):
-    return draw.textlength(text, font=fnt)
+def serif(size, bold=False):
+    return load_font("serif", size, bold)
 
 
-def wrap(draw, text, fnt, width):
-    """Greedy word wrap; returns a list of lines that fit width."""
+def sans(size, bold=False):
+    return load_font("sans", size, bold)
+
+
+def wrap_text(draw, text, font, max_width):
+    """Greedy word wrap: pack as many words per line as fit."""
     lines = []
-    for para in text.split("\n"):
-        words = para.split()
+    for chunk in text.split("\n"):
+        words = chunk.split()
         if not words:
             lines.append("")
             continue
-        cur = words[0]
+        current = words[0]
         for word in words[1:]:
-            trial = cur + " " + word
-            if draw.textlength(trial, font=fnt) <= width:
-                cur = trial
+            trial = current + " " + word
+            if draw.textlength(trial, font=font) <= max_width:
+                current = trial
             else:
-                lines.append(cur)
-                cur = word
-        lines.append(cur)
+                lines.append(current)
+                current = word
+        lines.append(current)
     return lines
 
 
-def text_block(draw, x, y, lines, fnt, fill, leading):
-    """Draw lines top-down; returns y just below the last line."""
+def text_block(draw, x, y, lines, font, fill, leading):
+    """Draw lines top to bottom; return the y just below the last line."""
     for line in lines:
-        draw.text((x, y), line, font=fnt, fill=fill)
+        draw.text((x, y), line, font=font, fill=fill)
         y += leading
     return y
 
 
-def rule(draw, x0, y, x1, width=1, fill=RULE):
+def hline(draw, x0, x1, y, fill, width=1):
+    """A horizontal rule from x0 to x1 at height y."""
     draw.line([(x0, y), (x1, y)], fill=fill, width=width)
 
 
-def star_points(cx, cy, r_outer, r_inner, points=5):
-    import math
-
-    pts = []
+def star_points(cx, cy, outer, inner, points=5, start=-90):
+    """Vertices of a star polygon, alternating outer and inner radius."""
+    verts = []
     for i in range(points * 2):
-        r = r_outer if i % 2 == 0 else r_inner
-        angle = -math.pi / 2 + i * math.pi / points
-        pts.append((cx + r * math.cos(angle), cy + r * math.sin(angle)))
-    return pts
+        radius = outer if i % 2 == 0 else inner
+        angle = math.radians(start + i * 180.0 / points)
+        verts.append((cx + radius * math.cos(angle),
+                      cy + radius * math.sin(angle)))
+    return verts
 
 
-# ---------------------------------------------------------------- icons
-def icon_clock(draw, x, y, s, color):
-    cx, cy, r = x + s / 2, y + s / 2, s / 2 - 2
-    draw.ellipse([cx - r, cy - r, cx + r, cy + r], outline=color, width=2)
-    draw.line([(cx, cy), (cx, cy - r + 6)], fill=color, width=2)
-    draw.line([(cx, cy), (cx + r - 7, cy + 3)], fill=color, width=2)
-    draw.ellipse([cx - 2, cy - 2, cx + 2, cy + 2], fill=color)
+# --- seven small pictogram icons, each drawn from lines and shapes --------
+
+def icon_clock(draw, cx, cy, colour):
+    draw.ellipse([cx - 13, cy - 13, cx + 13, cy + 13],
+                 outline=colour, width=2)
+    draw.line([(cx, cy), (cx, cy - 8)], fill=colour, width=2)
+    draw.line([(cx, cy), (cx + 6, cy + 2)], fill=colour, width=2)
+    draw.ellipse([cx - 2, cy - 2, cx + 2, cy + 2], fill=colour)
 
 
-def icon_tower(draw, x, y, s, color):
-    draw.rectangle([x + 8, y + 6, x + s - 8, y + s - 2], outline=color, width=2)
-    draw.polygon([(x + 8, y + 6), (x + s / 2, y + 1), (x + s - 8, y + 6)],
-                 outline=color)
-    for wy in (y + 11, y + 17):
-        for wx in (x + 11, x + s / 2 - 1):
-            draw.rectangle([wx, wy, wx + 3, wy + 3], fill=color)
-    draw.line([(x + 4, y + s - 2), (x + s - 4, y + s - 2)], fill=color, width=2)
+def icon_tower(draw, cx, cy, colour):
+    draw.polygon([(cx - 8, cy + 13), (cx - 4, cy - 8),
+                  (cx + 4, cy - 8), (cx + 8, cy + 13)], fill=colour)
+    draw.line([(cx, cy - 8), (cx, cy - 13)], fill=colour, width=2)
+    draw.ellipse([cx - 2, cy - 15, cx + 2, cy - 11], fill=colour)
+    for wy in (-2, 3, 8):
+        draw.line([(cx - 4, cy + wy), (cx + 4, cy + wy)],
+                  fill=PAPER, width=1)
 
 
-def icon_chart(draw, x, y, s, color):
-    draw.line([(x + 3, y + 3), (x + 3, y + s - 4)], fill=color, width=2)
-    draw.line([(x + 3, y + s - 4), (x + s - 3, y + s - 4)], fill=color, width=2)
-    pts = [(x + 4, y + s - 9), (x + 10, y + 14), (x + 16, y + 18),
-           (x + 21, y + 8), (x + s - 4, y + 11)]
-    draw.line(pts, fill=color, width=2)
-    for px, py in pts:
-        draw.ellipse([px - 2, py - 2, px + 2, py + 2], fill=color)
+def icon_chart(draw, cx, cy, colour):
+    draw.line([(cx - 13, cy + 12), (cx + 13, cy + 12)],
+              fill=colour, width=2)
+    draw.line([(cx - 13, cy + 12), (cx - 13, cy - 12)],
+              fill=colour, width=2)
+    heights = [7, 12, 17]
+    for i, h in enumerate(heights):
+        bx = cx - 8 + i * 8
+        draw.rectangle([bx, cy + 10 - h, bx + 5, cy + 10], fill=colour)
+    draw.line([(cx - 10, cy - 4), (cx - 2, cy - 8), (cx + 6, cy - 11),
+               (cx + 12, cy - 13)], fill=RED, width=2)
 
 
-def icon_stars(draw, x, y, s, color):
-    import math
-
-    cx, cy, r = x + s / 2, y + s / 2, s / 2 - 4
-    for i in range(8):
-        angle = i * math.pi / 4
-        px = cx + r * math.cos(angle)
-        py = cy + r * math.sin(angle)
-        draw.ellipse([px - 2, py - 2, px + 2, py + 2], fill=color)
-    draw.ellipse([cx - 2, cy - 2, cx + 2, cy + 2], fill=color)
+def icon_stars_circle(draw, cx, cy, colour):
+    draw.ellipse([cx - 13, cy - 13, cx + 13, cy + 13],
+                 outline=colour, width=2)
+    for k in range(6):
+        angle = math.radians(k * 60 - 90)
+        sx = cx + 8 * math.cos(angle)
+        sy = cy + 8 * math.sin(angle)
+        draw.polygon(star_points(sx, sy, 3.5, 1.5), fill=colour)
 
 
-def icon_scales(draw, x, y, s, color):
-    cx = x + s / 2
-    draw.line([(cx, y + 3), (cx, y + s - 5)], fill=color, width=2)
-    draw.line([(x + 4, y + 7), (x + s - 4, y + 7)], fill=color, width=2)
-    draw.line([(x + 2, y + s - 3), (x + s - 2, y + s - 3)], fill=color, width=2)
-    for px in (x + 6, x + s - 6):
-        draw.line([(px, y + 7), (px - 4, y + 15)], fill=color, width=1)
-        draw.line([(px, y + 7), (px + 4, y + 15)], fill=color, width=1)
-        draw.arc([px - 5, y + 13, px + 5, y + 21], 0, 180, fill=color, width=2)
+def icon_scales(draw, cx, cy, colour):
+    draw.line([(cx, cy - 12), (cx, cy + 12)], fill=colour, width=2)
+    draw.line([(cx - 11, cy - 8), (cx + 11, cy - 8)], fill=colour, width=2)
+    for side in (-1, 1):
+        px = cx + side * 11
+        draw.line([(px, cy - 8), (px - 5, cy + 2)], fill=colour, width=1)
+        draw.line([(px, cy - 8), (px + 5, cy + 2)], fill=colour, width=1)
+        draw.line([(px - 5, cy + 2), (px + 5, cy + 2)],
+                  fill=colour, width=2)
+    draw.ellipse([cx - 2, cy - 14, cx + 2, cy - 10], fill=colour)
 
 
-def icon_cross(draw, x, y, s, color):
-    w = 7
-    cx, cy = x + s / 2, y + s / 2
-    draw.rectangle([cx - w / 2, y + 2, cx + w / 2, y + s - 2], fill=color)
-    draw.rectangle([x + 2, cy - w / 2, x + s - 2, cy + w / 2], fill=color)
+def icon_cross(draw, cx, cy, colour):
+    draw.rectangle([cx - 3, cy - 12, cx + 3, cy + 12], fill=colour)
+    draw.rectangle([cx - 12, cy - 3, cx + 12, cy + 3], fill=colour)
 
 
-def icon_star(draw, x, y, s, color):
-    pts = star_points(x + s / 2, y + s / 2, s / 2 - 1, (s / 2 - 1) * 0.45)
-    draw.polygon(pts, fill=color)
+def icon_star(draw, cx, cy, colour):
+    draw.polygon(star_points(cx, cy, 13, 5.5), fill=colour)
 
 
-# ---------------------------------------------------------------- lead art
-def draw_lead_art(draw, x0, y0, x1, y1):
-    """Night sky over Kyiv: skyline, river, three bridges, explosions."""
-    draw.rectangle([x0, y0, x1, y1], fill=NAVY)
-    # Fixed stars (deterministic positions).
-    stars = [(52, 204), (120, 218), (200, 200), (300, 214), (380, 202),
-             (450, 222), (90, 240), (250, 232), (330, 244), (420, 238),
-             (160, 250), (470, 252)]
-    for sx, sy in stars:
-        draw.ellipse([sx - 1, sy - 1, sx + 1, sy + 1], fill=(220, 220, 200))
-    # Moon.
-    draw.ellipse([430, 198, 458, 226], fill=(232, 228, 200))
-    draw.ellipse([438, 204, 450, 216], fill=(NAVY[0] + 20, NAVY[1] + 20,
-                                              NAVY[2] + 20))
-    # Skyline silhouette.
-    base = y0 + 150
-    buildings = [(28, 60), (70, 92), (118, 48), (150, 78), (196, 58),
-                 (232, 100), (280, 66), (330, 88), (378, 54), (420, 80),
-                 (458, 62)]
-    for bx, bh in buildings:
-        draw.rectangle([bx, base - bh, bx + 42, base], fill=DARK_SKYLINE)
-    # Church dome + spire.
-    draw.ellipse([196, base - 108, 232, base - 72], fill=DARK_SKYLINE)
-    draw.polygon([(210, base - 108), (214, base - 128), (218, base - 108)],
-                 fill=DARK_SKYLINE)
-    # Tall tower with pointed top.
-    draw.rectangle([330, base - 118, 348, base], fill=DARK_SKYLINE)
-    draw.polygon([(330, base - 118), (339, base - 140), (348, base - 118)],
-                 fill=DARK_SKYLINE)
-    # Lit windows.
-    for wx, wy in [(80, 300), (130, 292), (244, 306), (292, 296), (390, 302),
-                   (432, 296), (164, 312), (344, 312)]:
-        draw.rectangle([wx, wy, wx + 3, wy + 4], fill=(255, 190, 80))
-    # River band across the lower third.
-    river_y = y0 + 153
-    draw.rectangle([x0, river_y, x1, y1], fill=STEEL)
-    draw.line([(x0, river_y + 18), (x1, river_y + 18)],
-              fill=(120, 160, 190), width=1)
-    draw.line([(x0, river_y + 44), (x1, river_y + 44)],
-              fill=(120, 160, 190), width=1)
+# --- lead illustration -----------------------------------------------------
+
+def draw_lead_panel(draw, x0, y0, x1, y1):
+    """Night scene over Kyiv: skyline, river, bridges, blasts, trails."""
+    draw.rectangle([x0, y0, x1, y1], fill=SKY)
+    # Distant skyline, a dark row of blocks with one domed church.
+    towers = [(0, 46, 52), (48, 34, 78), (84, 58, 44), (144, 40, 66),
+              (186, 52, 58), (240, 36, 84), (278, 44, 48), (324, 60, 72),
+              (386, 38, 56), (426, 46, 64)]
+    river_top = y0 + 152
+    for dx, w, h in towers:
+        draw.rectangle([x0 + dx, river_top - h, x0 + dx + w, river_top],
+                       fill=SILHOUETTE)
+    # Domed church near the middle of the row.
+    church_x = x0 + 240
+    draw.rectangle([church_x, river_top - 96, church_x + 36, river_top],
+                   fill=SILHOUETTE)
+    draw.ellipse([church_x + 4, river_top - 112, church_x + 32,
+                  river_top - 88], fill=GOLD)
+    draw.line([(church_x + 18, river_top - 112),
+               (church_x + 18, river_top - 122)], fill=GOLD, width=2)
+    # A few lit windows.
+    for wx, wy in [(18, 108), (64, 92), (104, 116), (160, 100),
+                   (300, 96), (352, 112), (404, 98), (444, 114)]:
+        draw.rectangle([x0 + wx, y0 + wy, x0 + wx + 4, y0 + wy + 5],
+                       fill=GOLD)
+    # Steel-blue river across the lower third.
+    draw.rectangle([x0, river_top, x1, y1], fill=RIVER)
+    draw.line([(x0, river_top + 18), (x1, river_top + 18)],
+              fill=(96, 132, 168), width=1)
+    draw.line([(x0, river_top + 44), (x1, river_top + 44)],
+              fill=(96, 132, 168), width=1)
     # Three arched bridges.
-    for bx0, bx1 in [(40, 160), (190, 310), (340, 470)]:
-        draw.arc([bx0, river_y - 6, bx1, river_y + 44], 180, 360,
-                 fill=(16, 16, 14), width=4)
-        draw.line([(bx0, river_y + 20), (bx1, river_y + 20)],
-                  fill=(16, 16, 14), width=3)
-    # Explosions on the left and middle bridges.
-    for ex, ey in [(100, 356), (250, 350)]:
-        for r, col in [(22, ORANGE), (15, YELLOW), (8, (255, 240, 160))]:
-            draw.ellipse([ex - r, ey - r, ex + r, ey + r], fill=col)
-        for dx, dy in [(-30, -18), (28, -22), (-26, 16), (30, 14),
-                       (0, -30), (-32, 0), (32, -2)]:
-            draw.line([(ex, ey), (ex + dx, ey + dy)], fill=YELLOW, width=2)
-    # Red missile trails curving in from the top right.
-    draw.arc([330, 190, 540, 330], 200, 290, fill=RED, width=3)
-    draw.arc([360, 190, 560, 320], 205, 285, fill=(220, 60, 50), width=2)
-    draw.arc([300, 190, 520, 350], 195, 280, fill=RED, width=2)
-    # Small white-red flag on a pole at the right edge.
-    draw.line([(492, 300), (492, 348)], fill=(230, 230, 220), width=2)
-    draw.rectangle([470, 300, 492, 307], fill=(240, 240, 235))
-    draw.rectangle([470, 307, 492, 314], fill=RED)
+    for centre in (110, 236, 362):
+        draw.arc([x0 + centre - 62, river_top - 34,
+                  x0 + centre + 62, river_top + 40],
+                 start=180, end=360, fill=STEEL, width=4)
+        draw.line([(x0 + centre - 62, river_top - 2),
+                   (x0 + centre + 62, river_top - 2)],
+                  fill=STEEL, width=2)
+    # Two blasts, one over the left bridge and one over the middle.
+    for bx, by in ((x0 + 110, river_top - 30), (x0 + 236, river_top - 26)):
+        draw.polygon(star_points(bx, by, 26, 10), fill=ORANGE)
+        draw.polygon(star_points(bx, by, 16, 7), fill=YELLOW)
+        draw.ellipse([bx - 7, by - 7, bx + 7, by + 7], fill=(255, 236, 170))
+    # Curved red missile trails sweeping in from the upper right,
+    # kept strictly inside the panel so they never touch the headline.
+    draw.arc([x0 + 280, y0 + 8, x1 - 8, y0 + 110], start=15, end=100,
+             fill=RED, width=2)
+    draw.arc([x0 + 310, y0 + 30, x1 - 8, y0 + 130], start=20, end=105,
+             fill=RED, width=2)
+    draw.ellipse([x1 - 52, y0 + 26, x1 - 44, y0 + 34], fill=RED)
+    draw.ellipse([x1 - 34, y0 + 52, x1 - 26, y0 + 60], fill=RED)
+    # Small white-over-red flag on a pole at the panel's right edge.
+    pole_x = x1 - 18
+    draw.line([(pole_x, y0 + 96), (pole_x, y0 + 148)],
+              fill=(220, 220, 210), width=2)
+    draw.rectangle([pole_x, y0 + 96, pole_x + 16, y0 + 104],
+                   fill=(245, 245, 240))
+    draw.rectangle([pole_x, y0 + 104, pole_x + 16, y0 + 112], fill=RED)
+    draw.rectangle([x0, y0, x1, y1], outline=OUTLINE, width=1)
 
 
-# ---------------------------------------------------------------- tiles
-def draw_tile(draw, x, y, w, h, kicker, headline, deck, accent, icon_fn):
-    draw.rectangle([x, y, x + w, y + h], fill=PAPER2,
-                   outline=PANEL_LINE, width=1)
-    draw.text((x + 12, y + 10), kicker, font=font("sans_bold", 12), fill=accent)
-    icon_fn(draw, x + w - 40, y + 10, 28, accent)
-    rule(draw, x + 12, y + 30, x + w - 12, width=1, fill=PANEL_LINE)
-    head_lines = wrap(draw, headline, font("sans_bold", 18), w - 24)
-    y_cur = text_block(draw, x + 12, y + 40, head_lines,
-                       font("sans_bold", 18), INK, 22)
-    deck_lines = wrap(draw, deck, font("sans", 14), w - 24)
-    text_block(draw, x + 12, y_cur + 6, deck_lines,
-               font("sans", 14), BODY, 18)
+# --- story tiles and the numbers box ---------------------------------------
+
+def draw_tile(draw, x, y, kicker, accent, headline, deck, icon):
+    """One 235x196 story tile with a kicker, icon, headline and deck."""
+    draw.rectangle([x, y, x + 235, y + 196], fill=PANEL,
+                   outline=OUTLINE, width=1)
+    draw.text((x + 12, y + 11), kicker, font=sans(12, bold=True),
+              fill=accent)
+    icon(draw, x + 208, y + 25, accent)
+    hline(draw, x + 12, x + 223, y + 36, OUTLINE, 1)
+    head_lines = wrap_text(draw, headline, sans(18, bold=True), 211)
+    after_head = text_block(draw, x + 12, y + 44, head_lines,
+                            sans(18, bold=True), INK, 21)
+    deck_lines = wrap_text(draw, deck, sans(14), 211)
+    text_block(draw, x + 12, after_head + 6, deck_lines,
+               sans(14), BODY, 17)
 
 
-def draw_numbers_box(draw, x, y, w, h):
-    draw.rectangle([x, y, x + w, y + h], fill=NAVY2)
-    draw.text((x + 12, y + 10), "BY THE NUMBERS",
-              font=font("sans_bold", 12), fill=GOLD)
-    rule(draw, x + 12, y + 30, x + w - 12, width=1, fill=(70, 90, 120))
+def draw_numbers(draw, x, y):
+    """Dark box of five big figures from the day's news."""
+    draw.rectangle([x, y, x + 235, y + 196], fill=DARK)
+    draw.text((x + 12, y + 11), "BY THE NUMBERS",
+              font=sans(13, bold=True), fill=GOLD)
+    hline(draw, x + 12, x + 223, y + 36, GOLD, 1)
     rows = [
         ("400+", "drones fired at Ukraine"),
         ("110", "missiles, 27 ballistic"),
         ("8", "killed in the strikes"),
         ("51–48", "Senate war-powers vote"),
-        ("$97.17", "Anthropic's first close"),
+        ("$97.17", "Anthropic first close"),
     ]
-    ry = y + 44
-    for num, label in rows:
-        draw.text((x + 12, ry), num, font=font("sans_bold", 16), fill=NUM_FG)
-        draw.text((x + 100, ry + 2), label, font=font("sans", 11),
-                  fill=NUM_LABEL)
-        ry += 30
+    row_y = y + 46
+    for figure, label in rows:
+        figure_font = sans(19, bold=True)
+        draw.text((x + 12, row_y), figure, font=figure_font,
+                  fill=(244, 240, 228))
+        label_x = (x + 12 + draw.textlength(figure, font=figure_font)
+                   + 8)
+        draw.text((label_x, row_y + 4), label, font=sans(12),
+                  fill=(206, 202, 188))
+        row_y += 29
 
 
-# ---------------------------------------------------------------- page
+TILES = [
+    dict(kicker="WASHINGTON", accent=RED,
+         headline="TRUMP: NO IRAN CALL UNTIL 2027",
+         deck=("Trump will not decide his next move in the Iran war "
+               "until the new year, he told Axios; Senate Republicans "
+               "blocked a war-powers vote, 51 to 48."),
+         icon=icon_clock),
+    dict(kicker="RIYADH", accent=RED,
+         headline="HOUTHI MISSILE HITS RIYADH TOWER",
+         deck=("A missile damaged the PIF Tower in Riyadh's financial "
+               "district, as the Iran war enters its ninth month and "
+               "tanker attacks rise in Hormuz."),
+         icon=icon_tower),
+    dict(kicker="NEW YORK", accent=RED,
+         headline="ANTHROPIC UP 17% — STOCKS SLIDE",
+         deck=("Anthropic's record $81.3bn IPO closed at $97.17, but "
+               "the S&P 500 fell 2% and Japan's Nikkei slid 4.8% as "
+               "the AI sell-off spread."),
+         icon=icon_chart),
+    dict(kicker="BRUSSELS", accent=BLUE,
+         headline="EU AND UK MEET IN BRUSSELS",
+         deck=("Costa and von der Leyen met PM Burnham at the second "
+               "EU–UK summit; Germany's Merz rejected a new Yalta "
+               "over Europe's future."),
+         icon=icon_stars_circle),
+    dict(kicker="THE HAGUE", accent=RED,
+         headline="MYANMAR GUILTY OF GENOCIDE",
+         deck=("The World Court ruled 9–6 that the 2017 campaign "
+               "against the Rohingya was genocide — the first state "
+               "ever held to account."),
+         icon=icon_scales),
+    dict(kicker="NAIROBI", accent=TEAL,
+         headline="KENYA BEATS EBOLA",
+         deck=("Kenya sent home its last Ebola patient, 37 days after "
+               "the first case — the outbreak is over."),
+         icon=icon_cross),
+    dict(kicker="WORLD", accent=PURPLE,
+         headline="GTA VI TOPS $2.3BN",
+         deck=("The worldwide launch of GTA VI passed $2.3bn "
+               "in sales."),
+         icon=icon_star),
+]
+
+
 def main():
-    img = Image.new("RGB", (W, H), PAPER)
+    img = Image.new("RGB", (WIDTH, HEIGHT), PAPER)
     draw = ImageDraw.Draw(img)
 
-    # Frame.
-    draw.rectangle([6, 6, 1017, 1017], outline=RULE, width=2)
+    # Outer frame.
+    draw.rectangle([6, 6, 1017, 1017], outline=INK, width=2)
 
-    # Masthead.
+    # --- masthead ----------------------------------------------------------
     draw.text((28, 22), "THE WORLD IN ONE PICTURE",
-              font=font("sans_bold", 13), fill=RED)
-    right = "No. 20 — 2026"
-    draw.text((996 - draw.textlength(right, font=font("sans_bold", 13)), 22),
-              right, font=font("sans_bold", 13), fill=FAINT)
+              font=sans(13, bold=True), fill=RED)
+    tag = "No. 20 — 2026"
+    draw.text((996 - draw.textlength(tag, font=sans(13, bold=True)), 22),
+              tag, font=sans(13, bold=True), fill=FADED)
     title = "THE DAY IN THE WORLD"
-    tw = draw.textlength(title, font=font("serif_bold", 58))
-    draw.text(((W - tw) / 2, 40), title, font=font("serif_bold", 58), fill=INK)
-    rule(draw, 28, 112, 996, width=3)
+    title_w = draw.textlength(title, font=serif(58, bold=True))
+    draw.text(((WIDTH - title_w) / 2, 40), title,
+              font=serif(58, bold=True), fill=INK)
+    hline(draw, 28, 996, 112, INK, 3)
     date = "FRIDAY, 20 NOVEMBER 2026"
-    dw = draw.textlength(date, font=font("sans_bold", 20))
-    draw.text(((W - dw) / 2, 122), date, font=font("sans_bold", 20), fill=INK)
-    rule(draw, 28, 152, 996, width=1)
+    date_w = draw.textlength(date, font=sans(20, bold=True))
+    draw.text(((WIDTH - date_w) / 2, 122), date,
+              font=sans(20, bold=True), fill=INK)
+    hline(draw, 28, 996, 152, OUTLINE, 1)
 
-    # Lead.
+    # --- lead story --------------------------------------------------------
     draw.text((28, 166), "KYIV — WAR SPILLS INTO POLAND",
-              font=font("sans_bold", 13), fill=RED)
-    draw_lead_art(draw, 28, 190, 500, 420)
-    caption = ("Russian missiles hit Kyiv's bridges overnight; two missiles "
-               "and a drone crossed into Poland.")
-    cap_lines = wrap(draw, caption, font("serif", 13), 472)
-    text_block(draw, 28, 424, cap_lines, font("serif", 13), FAINT, 16)
+              font=sans(13, bold=True), fill=RED)
+    draw_lead_panel(draw, 28, 190, 500, 420)
+    caption = ("Russian missiles struck Kyiv's bridges overnight, and "
+               "two missiles and a drone crossed into Poland.")
+    text_block(draw, 28, 424,
+               wrap_text(draw, caption, serif(13), 472),
+               serif(13), FADED, 15)
 
-    # Lead right column.
-    head_lines = wrap(draw, "MISSILES OVER KYIV, INTO POLAND",
-                      font("serif_bold", 40), 472)
-    y_cur = text_block(draw, 524, 186, head_lines,
-                       font("serif_bold", 40), INK, 48)
-    deck = ("Russia fires 400 drones and 110 missiles in one of its biggest "
-            "barrages of the war — hitting three bridges across the Dnipro, "
-            "killing eight, and sending two missiles and a jet drone into "
-            "NATO Poland.")
-    deck_lines = wrap(draw, deck, font("sans", 17), 472)
-    y_cur = text_block(draw, 524, y_cur + 10, deck_lines,
-                       font("sans", 17), BODY, 23)
-    rule(draw, 524, y_cur + 12, 996, width=1, fill=PANEL_LINE)
-    draw.text((524, y_cur + 22),
-              "Hours after Putin's Shenzhen talks with Trump —",
-              font=font("sans_bold", 14), fill=INK)
-    draw.text((524, y_cur + 42),
-              "and his vow of a 'much more painful' reply.",
-              font=font("sans_bold", 14), fill=INK)
-    rule(draw, 28, 458, 996, width=2)
+    head_lines = wrap_text(draw, "MISSILES OVER KYIV, INTO POLAND.",
+                           serif(37, bold=True), 472)
+    cursor = text_block(draw, 524, 186, head_lines,
+                        serif(37, bold=True), INK, 41)
+    deck = ("Russia fired 400 drones and 110 missiles in one of the "
+            "war's largest barrages — hitting three bridges over the "
+            "Dnipro, killing eight people, and sending two missiles "
+            "and a jet drone into NATO member Poland.")
+    cursor = text_block(draw, 524, cursor + 10,
+                        wrap_text(draw, deck, sans(17), 472),
+                        sans(17), BODY, 22)
+    hline(draw, 524, 996, cursor + 10, OUTLINE, 1)
+    text_block(draw, 524, cursor + 20,
+               ["Hours after Putin's talks with Trump in Shenzhen —",
+                "and his promise of a far more painful retaliation."],
+               sans(14, bold=True), INK, 19)
 
-    # Story grid.
-    gx, gy = 28, 474
-    tw_, th_, gap = 235, 196, 12
-    tiles = [
-        ("WASHINGTON", "TRUMP: NO IRAN CALL UNTIL 2027",
-         "Trump tells Axios he will not decide the next step in the Iran war "
-         "until the new year. Senate Republicans block a war-powers vote, "
-         "51–48.", RED, icon_clock),
-        ("RIYADH", "HOUTHI MISSILE HITS RIYADH TOWER",
-         "A missile damages the PIF tower in Riyadh's financial district, "
-         "as the Iran war enters its ninth month and tanker attacks mount "
-         "in Hormuz.", RED, icon_tower),
-        ("NEW YORK", "ANTHROPIC UP 17% — STOCKS SLIDE",
-         "The record $81.3bn IPO closes at $97.17, but the S&P 500 falls 2% "
-         "and Japan's Nikkei drops 4.8% as the AI sell-off spreads.",
-         RED, icon_chart),
-        ("BRUSSELS", "EU AND UK MEET IN BRUSSELS",
-         "Costa and von der Leyen meet PM Burnham at the second EU–UK "
-         "summit. Germany's Merz rejects a new Yalta over Europe.",
-         BLUE, icon_stars),
-        ("THE HAGUE", "MYANMAR GUILTY OF GENOCIDE",
-         "The World Court rules 9–6: the 2017 campaign against the Rohingya "
-         "was genocide — the first state ever held responsible.",
-         RED, icon_scales),
-        ("NAIROBI", "KENYA BEATS EBOLA",
-         "Kenya discharges its last Ebola patient, 37 days after the first "
-         "case — the outbreak is over.", TEAL, icon_cross),
-        ("WORLD", "GTA VI TOPS $2.3BN",
-         "The game's worldwide launch tops $2.3 billion in sales.",
-         PURPLE, icon_star),
-    ]
-    positions = [(0, 0), (1, 0), (2, 0), (3, 0), (0, 1), (1, 1), (2, 1)]
-    for (col, row), (kicker, headline, deck_t, accent, icon_fn) in zip(
-            positions, tiles):
-        x = gx + col * (tw_ + gap)
-        y = gy + row * (th_ + gap)
-        draw_tile(draw, x, y, tw_, th_, kicker, headline, deck_t, accent,
-                  icon_fn)
-    # Numbers box: grid column 4, row 2.
-    draw_numbers_box(draw, gx + 3 * (tw_ + gap), gy + (th_ + gap), tw_, th_)
+    hline(draw, 28, 996, 458, INK, 3)
 
-    # Wire strip.
-    sy = 892
-    draw.rectangle([28, sy, 996, sy + 62], fill=STRIP)
-    draw.text((40, sy + 8), "ALSO TODAY", font=font("sans_bold", 13), fill=RED)
-    wire = ("COP31 draft drops all fossil-fuel language  •  IMF: world "
-            "public debt nears 100% of GDP  •  Italy fines Meta €805m over "
-            "photo access  •  FAA ground stop strands 1.5m travellers  •  "
-            "Bukele registers for a third term in El Salvador")
-    wire_lines = wrap(draw, wire, font("sans_bold", 14), 916)
-    text_block(draw, 40, sy + 26, wire_lines, font("sans_bold", 14), INK, 18)
+    # --- story grid --------------------------------------------------------
+    positions = [(28, 474), (275, 474), (522, 474), (769, 474),
+                 (28, 682), (275, 682), (522, 682)]
+    for tile, (tx, ty) in zip(TILES, positions):
+        draw_tile(draw, tx, ty, tile["kicker"], tile["accent"],
+                  tile["headline"], tile["deck"], tile["icon"])
+    draw_numbers(draw, 769, 682)
 
-    # Footer.
+    # --- wire strip --------------------------------------------------------
+    draw.rectangle([28, 892, 996, 954], fill=WIRE)
+    draw.text((40, 900), "ALSO TODAY", font=sans(12, bold=True), fill=RED)
+    wire = ("Draft COP31 text drops all fossil-fuel language; the IMF "
+            "says world public debt is nearing 100% of GDP; Italy "
+            "fines Meta €805m over photo access; an FAA ground stop "
+            "strands 1.5m travellers; Bukele registers for a third "
+            "term in El Salvador.")
+    text_block(draw, 150, 898,
+               wrap_text(draw, wire, sans(12), 834),
+               sans(12), BODY, 15)
+
+    # --- footer ------------------------------------------------------------
     draw.text((28, 972),
-              "Every story was reported on 20 November 2026. Sources: "
-              "Reuters, AP, AFP, BBC, CNN, WSJ, Just Security, Euronews.",
-              font=font("sans", 12), fill=FAINT)
-    draw.text((28, 992), "Drawn by an AI agent for make.fun — one day, one picture.",
-              font=font("sans", 12), fill=FAINT)
+              "All stories reported on 20 November 2026. Sources: "
+              "Reuters, AP, AFP, BBC, CNN, WSJ, Just Security, "
+              "Euronews.",
+              font=sans(12), fill=FADED)
+    draw.text((28, 992),
+              "Drawn by an AI agent for make.fun — one day, one picture.",
+              font=sans(12), fill=FADED)
 
-    out = os.path.join(os.path.dirname(os.path.abspath(__file__)), "entry.png")
-    img.save(out, "PNG")
-    print("wrote %s (%d bytes)" % (out, os.path.getsize(out)))
+    here = os.path.dirname(os.path.abspath(__file__))
+    out_path = os.path.join(here, "entry.png")
+    img.save(out_path, format="PNG")
+    print("wrote %s (%d bytes)" % (out_path, os.path.getsize(out_path)))
 
 
 if __name__ == "__main__":
